@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  # 1. existing Postgres service
+  postgres:
+    image: postgres:15-alpine
+    container_name: nest_postgres_db
+    environment:
+      POSTGRES_USER: myuser
+      POSTGRES_PASSWORD: mypassword
+      POSTGRES_DB: asset_management_db
+    ports:
+      - "5433:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    restart: always
+
+  # 2. NestJS Application service
+  api:
+    image: mohamedlaajimi123/asset-manager-backend:latest
+    container_name: nest_api_service
+    ports:
+      - "3000:3000"
+    env_file:
+      - .env
+    depends_on:
+      - postgres
+    restart: always
+
+volumes:
+  postgres_data:

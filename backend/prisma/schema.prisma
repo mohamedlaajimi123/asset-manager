@@ -1,0 +1,49 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  USER
+  ADMIN
+}
+
+model User {
+  id        String   @id @default(uuid())
+  email     String   @unique
+  password  String
+  role      Role     @default(USER)
+  createdAt DateTime @default(now())
+
+  storageLimit BigInt   @default(1073741824) // 1GB default allowance (1024 * 1024 * 1024 bytes)
+  storageUsed  BigInt   @default(0)          // Starts clean at 0 bytes used
+  
+  folder    Folder?
+}
+
+model Folder {
+  id        String   @id @default(uuid())
+  name      String   @default("Root")
+  createdAt DateTime @default(now())
+
+  userId    String   @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  assets    Asset[]
+}
+
+model Asset {
+  id          String   @id @default(uuid())
+  filename    String
+  blobName    String
+  mimeType    String
+  sizeInBytes Int
+  createdAt   DateTime @default(now())
+
+  folderId    String
+  folder      Folder   @relation(fields: [folderId], references: [id], onDelete: Cascade)
+}
