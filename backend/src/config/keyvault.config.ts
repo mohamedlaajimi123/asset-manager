@@ -2,7 +2,7 @@ import { SecretClient } from '@azure/keyvault-secrets';
 import { DefaultAzureCredential } from '@azure/identity';
 
 export async function loadKeyVaultSecrets() {
-  const vaultUrl = process.env.AZURE_KEY_VAULT_URL;
+  const vaultUrl = process.env.AZURE_KEYVAULT_RESOURCEENDPOINT;
   
   if (!vaultUrl) {
     console.log('No Azure Key Vault endpoint found. Falling back to local env variables.');
@@ -27,23 +27,15 @@ export async function loadKeyVaultSecrets() {
 
     const secrets: Record<string, string> = {};
 
-    const results = await Promise.allSettled(
-      secretNames.map(async (name) => ({
-        name,
-        secret: await client.getSecret(name),
-      })),
-    );
-
-    results.forEach((result) => {
-      if (result.status === 'fulfilled') {
-        const { name, secret } = result.value;
+    for (const name of secretNames) {
+      try {
+        const secret = await client.getSecret(name);
         const envKey = name.replace(/-/g, '_').toUpperCase();
         secrets[envKey] = secret.value || '';
-        return;
+      } catch (err :any) {
+        console.warn(`Could not fetch secret "${name}" from Key Vault:`, err.message);
       }
-
-      console.warn('Could not fetch secret from Key Vault:', result.reason?.message ?? result.reason);
-    });
+    }
 
     console.log('Successfully loaded secrets from Azure Key Vault.');
     return secrets;

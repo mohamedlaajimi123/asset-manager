@@ -5,13 +5,11 @@ import { AppService } from './app.service';
 import { AuthModule } from './auth/auth.module';
 import { AssetsModule } from './assets/assets.module';
 import { MailerModule } from "@nestjs-modules/mailer";
-import { loadKeyVaultSecrets } from './config/keyvault.config';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
-      load: [loadKeyVaultSecrets],
     }),
     MailerModule.forRootAsync({
       imports: [ConfigModule],
