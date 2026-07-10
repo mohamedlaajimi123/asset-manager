@@ -132,17 +132,17 @@ export class AssetsService {
       targetFolderId = defaultFolder.id;
     }
 
-    const userProfile = await this.prisma.user.findUnique({
+    const user = await this.prisma.user.findUnique({
       where: { id: userId },
-      select: { storageLimit: true, storageUsed: true },
+      select: { email: true, storageLimit: true, storageUsed: true },
     });
 
-    if (!userProfile) {
+    if (!user) {
       throw new NotFoundException('User profile not found');
     }
 
-    const storageLimit = Number(userProfile.storageLimit);
-    const storageUsed = Number(userProfile.storageUsed);
+    const storageLimit = Number(user.storageLimit);
+    const storageUsed = Number(user.storageUsed);
     if (!canAcceptUpload({ storageUsed, storageLimit, incomingBytes: file.size })) {
       const remaining = Math.max(0, storageLimit - storageUsed);
       throw new BadRequestException(`Storage limit reached. You have ${this.formatBytes(remaining)} remaining.`);
@@ -173,7 +173,7 @@ export class AssetsService {
         await tx.user.update({
           where: { id: userId },
           data: {
-            storageUsed: userProfile.storageUsed + BigInt(file.size),
+            storageUsed: user.storageUsed + BigInt(file.size),
           },
         });
 
@@ -200,7 +200,7 @@ export class AssetsService {
             plainText: `Success: The file "${newAsset.filename}" has been processed and saved to your asset hub.`,
           },
           recipients: {
-            to: [{ address: 'mohamedlaajimi2005@gmail.com' }],
+            to: [{ address: user.email ?? senderAddress }],
           },
         };
 
