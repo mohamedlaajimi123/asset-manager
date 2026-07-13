@@ -1,4 +1,4 @@
-# Asset Manager Backend
+# Asset Manager 
 
 Enterprise backend service for asset management, built on NestJS with Prisma ORM and PostgreSQL, integrated with Azure Key Vault, Azure Blob Storage, and Azure Communication Services.
 
