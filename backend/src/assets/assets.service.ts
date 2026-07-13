@@ -1,31 +1,56 @@
 import { Injectable, NotFoundException, UnauthorizedException, BadRequestException } from '@nestjs/common';
 import { BlobServiceClient, StorageSharedKeyCredential, generateBlobSASQueryParameters, BlobSASPermissions, SASProtocol } from '@azure/storage-blob';
-import { ConfigService } from '@nestjs/config';
 import type { Express } from 'express';
 import { PrismaService } from '../prisma.service';
 import { EmailClient } from '@azure/communication-email';
 import { canAcceptUpload, getStorageUsagePercent } from './storage-usage';
+import { loadKeyVaultSecrets } from '../config/keyvault.config';
 
 @Injectable()
 export class AssetsService {
-  private readonly blobServiceClient: BlobServiceClient;
-  private readonly containerName: string;
-  private readonly emailClient?: EmailClient;
+  private blobServiceClient!: BlobServiceClient;
+  private containerName = '';
+  private emailClient?: EmailClient;
+  private storageConnectionString = '';
+  private senderAddress = '';
+  private readonly ready: Promise<void>;
 
-  constructor(
-    private readonly prisma: PrismaService, 
-    private readonly configService: ConfigService,
-  ) {
-    const connectionString = this.configService.getOrThrow<string>('azure.storageConnectionString');
-    const containerName = this.configService.getOrThrow<string>('azure.containerName');
+  constructor(private readonly prisma: PrismaService) {
+    this.ready = this.initialize();
+  }
 
-    this.containerName = containerName;
-    this.blobServiceClient = BlobServiceClient.fromConnectionString(connectionString);
+  private async initialize() {
+    const secrets = await loadKeyVaultSecrets();
+
+    this.storageConnectionString =
+      secrets.AZURE_STORAGE_CONNECTION_STRING ?? process.env.AZURE_STORAGE_CONNECTION_STRING ?? '';
+    this.containerName = secrets.AZURE_CONTAINER_NAME ?? process.env.AZURE_CONTAINER_NAME ?? '';
+    this.senderAddress = secrets.EMAIL_FROM_ADDRESS ?? process.env.EMAIL_FROM_ADDRESS ?? '';
+
+    if (!this.storageConnectionString) {
+      throw new Error('AZURE_STORAGE_CONNECTION_STRING must be defined');
+    }
+
+    if (!this.containerName) {
+      throw new Error('AZURE_CONTAINER_NAME must be defined');
+    }
+
+    this.blobServiceClient = BlobServiceClient.fromConnectionString(this.storageConnectionString);
 
     if (process.env.NODE_ENV === 'production') {
-      const emailConnectionString = this.configService.getOrThrow<string>('azure.emailConnectionString');
+      const emailConnectionString =
+        secrets.AZURE_EMAIL_CONNECTION_STRING ?? process.env.AZURE_EMAIL_CONNECTION_STRING ?? '';
+
+      if (!emailConnectionString) {
+        throw new Error('AZURE_EMAIL_CONNECTION_STRING must be defined');
+      }
+
       this.emailClient = new EmailClient(emailConnectionString);
     }
+  }
+
+  private async ensureReady() {
+    await this.ready;
   }
 
   private getBlobClient(blobName: string) {
@@ -70,6 +95,8 @@ export class AssetsService {
   }
 
   async createFolder(name: string, userId: string) {
+    await this.ensureReady();
+
     if (!name || name.trim() === '') {
       throw new BadRequestException('Folder name cannot be empty');
     }
@@ -82,6 +109,8 @@ export class AssetsService {
   }
 
   async createAsset(file: Express.Multer.File, userId: string, folderId?: string) {
+    await this.ensureReady();
+
     let targetFolderId = folderId;
 
     // 1. Structural DB Validation Checks (Fast)
@@ -153,10 +182,9 @@ export class AssetsService {
 
     // 3. SPEED BOOST FIX: Asynchronous Fire-and-Forget Email Dispatch
     if (process.env.NODE_ENV === 'production') {
-      const senderAddress = this.configService.getOrThrow<string>('azure.emailFromAddress');
-      if (senderAddress && this.emailClient) {
+      if (this.senderAddress && this.emailClient) {
         const emailMessage = {
-          senderAddress: senderAddress,
+          senderAddress: this.senderAddress,
           content: {
             subject: 'Asset Uploaded Successfully',
             plainText: `Success: The file "${newAsset.filename}" has been processed and saved to your asset hub.`,
@@ -184,6 +212,8 @@ export class AssetsService {
     return newAsset;
   }
   async listAssetsByUser(userId: string, role: string) {
+    await this.ensureReady();
+
     if (role === 'ADMIN') {
       return this.prisma.asset.findMany({
         orderBy: { createdAt: 'desc' },
@@ -212,6 +242,8 @@ export class AssetsService {
   }
 
   async getAssetFile(assetId: string, userId: string, role: string) {
+    await this.ensureReady();
+
     const asset = await this.getAssetAndVerifyOwner(assetId, userId, role);
     const blobClient = this.getBlobClient(asset.blobName);
     const downloadResponse = await blobClient.download();
@@ -221,14 +253,15 @@ export class AssetsService {
   }
 
   async generateBlobSasUrl(assetId: string, userId: string, role: string) {
+    await this.ensureReady();
+
     const asset = await this.getAssetAndVerifyOwner(assetId, userId, role);
-    const connectionString = this.configService.getOrThrow<string>('azure.storageConnectionString');
     
     const parsed = new URL(this.blobServiceClient.url);
     const accountName = parsed.hostname.split('.')[0];
     const sharedKeyCredential = new StorageSharedKeyCredential(
       accountName,
-      this.extractAccountKeyFromConnectionString(connectionString),
+      this.extractAccountKeyFromConnectionString(this.storageConnectionString),
     );
 
     const sasToken = generateBlobSASQueryParameters(
@@ -253,6 +286,8 @@ export class AssetsService {
   }
 
   async getStorageUsage(userId: string) {
+    await this.ensureReady();
+
     const user = await this.prisma.user.findUnique({
       where: { id: userId },
       select: { storageLimit: true, storageUsed: true },
@@ -273,6 +308,8 @@ export class AssetsService {
   }
 
   async deleteAsset(assetId: string, userId: string, role: string) {
+    await this.ensureReady();
+
     const asset = await this.getAssetAndVerifyOwner(assetId, userId, role);
     const blobClient = this.getBlobClient(asset.blobName);
     await blobClient.deleteIfExists();
@@ -298,6 +335,8 @@ export class AssetsService {
     return { deleted: true };
   }
   async listFoldersByUser(userId: string, role: string) {
+    await this.ensureReady();
+
     if (role === 'ADMIN') {
       const folders = await this.prisma.folder.findMany({
         include: {
@@ -327,6 +366,8 @@ export class AssetsService {
   }
 
   async adminForceDeleteAsset(assetId: string) {
+    await this.ensureReady();
+
     const asset = await this.prisma.asset.findUnique({
       where: { id: assetId },
       include: { folder: true },
